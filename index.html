@@ -41,7 +41,7 @@
       height: 0;
     }
 
-    .tiptap img {
+    .tiptap img, .tiptap video {
       max-width: 100%;
       height: auto;
       border-radius: 0.75rem;
@@ -50,8 +50,8 @@
       transition: transform 0.2s ease;
     }
 
-    .tiptap img:hover {
-      transform: scale(1.01);
+    .tiptap img:hover, .tiptap video:hover {
+      transform: scale(1.005);
     }
 
     .tiptap blockquote {
@@ -106,6 +106,7 @@
     "@google/genai": "https://esm.sh/@google/genai@1.35.0",
     "docx": "https://esm.sh/docx@9.1.0",
     "lucide-react": "https://esm.sh/lucide-react@0.468.0?deps=react@19.0.0",
+    "@tiptap/core": "https://esm.sh/@tiptap/core@2.11.0",
     "@tiptap/react": "https://esm.sh/@tiptap/react@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
     "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
     "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@2.11.0?deps=react@19.0.0,react-dom@19.0.0",

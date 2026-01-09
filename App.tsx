@@ -1,6 +1,5 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-// Removed BubbleMenu from the import as it was causing a "no exported member" error.
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
@@ -8,17 +7,44 @@ import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
 import TextAlign from '@tiptap/extension-text-align';
 import BubbleMenuExtension from '@tiptap/extension-bubble-menu';
+import { Node, mergeAttributes } from '@tiptap/core';
 
 import { generateAiWritingAssist } from './services/geminiService';
 import { exportDocToDocx } from './services/exportService';
+import { ContentBlock } from './types';
 import { 
   Pencil, Trash2, Save, X, Check, ClipboardList, 
   Bold, Italic, Underline as UnderlineIcon, 
   RotateCcw, RotateCw, Eraser, Sparkles, Wand2,
-  Image as ImageIcon, Loader2,
+  Image as ImageIcon, Loader2, Video as VideoIcon,
   List as ListIcon, ListOrdered, GripHorizontal,
   FileDown
 } from 'lucide-react';
+
+// Custom Video Node for Tiptap
+const Video = Node.create({
+  name: 'video',
+  group: 'block',
+  selectable: true,
+  draggable: true,
+  atom: true,
+
+  addAttributes() {
+    return {
+      src: { default: null },
+      controls: { default: true },
+      type: { default: 'video/mp4' },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: 'video' }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['video', mergeAttributes(HTMLAttributes, { width: '100%', class: 'rounded-lg shadow-lg my-4' })];
+  },
+});
 
 interface Post {
   id: string;
@@ -42,17 +68,17 @@ const App: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
     extensions: [
       StarterKit,
       Underline,
       Image.configure({
-        HTMLAttributes: {
-          class: 'rounded-lg shadow-lg max-w-full my-4',
-        },
+        HTMLAttributes: { class: 'rounded-lg shadow-lg max-w-full my-4' },
       }),
+      Video,
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
@@ -114,9 +140,19 @@ const App: React.FC = () => {
 
     const { from, to } = editor.state.selection;
     const isSelectionActive = from !== to;
+    
+    const mediaBlocks: ContentBlock[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'image') {
+        mediaBlocks.push({ id: Math.random().toString(), type: 'image', content: node.attrs.src });
+      } else if (node.type.name === 'video') {
+        mediaBlocks.push({ id: Math.random().toString(), type: 'video', content: node.attrs.src, mimeType: node.attrs.type });
+      }
+    });
+
     const selectedText = isSelectionActive 
       ? editor.state.doc.textBetween(from, to, ' ') 
-      : null;
+      : editor.getHTML();
 
     if (!title && !editor.getText()) {
       setError("제목이나 내용을 입력해주세요!");
@@ -128,10 +164,9 @@ const App: React.FC = () => {
     setIsSelectionMode(isSelectionActive);
 
     try {
-      const contextContent = isSelectionActive ? (selectedText || "") : editor.getHTML();
       const suggestion = await generateAiWritingAssist(
         title, 
-        [{ id: '1', type: 'text', content: contextContent }],
+        [{ id: 'main', type: 'text', content: selectedText }, ...mediaBlocks],
         isSelectionActive
       );
       
@@ -201,7 +236,22 @@ const App: React.FC = () => {
       editor.chain().focus().setImage({ src }).run();
     };
     reader.readAsDataURL(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  };
+
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editor) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const src = event.target?.result as string;
+      editor.chain().focus().insertContent({
+        type: 'video',
+        attrs: { src, type: file.type }
+      }).run();
+    };
+    reader.readAsDataURL(file);
+    if (videoInputRef.current) videoInputRef.current.value = '';
   };
 
   if (!editor) return null;
@@ -265,46 +315,49 @@ const App: React.FC = () => {
           />
         </div>
 
-        <div className="flex flex-wrap items-center px-6 py-3 bg-white/80 backdrop-blur-md border-y border-slate-100 gap-2 sticky top-0 z-50">
-          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
-            <button onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} className="p-2.5 hover:bg-white rounded-lg text-slate-500 disabled:opacity-20 transition-all"><RotateCcw size={18} /></button>
-            <button onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} className="p-2.5 hover:bg-white rounded-lg text-slate-500 disabled:opacity-20 transition-all"><RotateCw size={18} /></button>
-          </div>
+        {/* Organized single line toolbar */}
+        <div className="flex items-center px-6 py-3 bg-white/80 backdrop-blur-md border-y border-slate-100 gap-2 sticky top-0 z-50 overflow-x-auto no-scrollbar">
+          <div className="flex flex-nowrap items-center gap-2 w-full">
+            <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner shrink-0">
+              <button onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} className="p-2 hover:bg-white rounded-lg text-slate-500 disabled:opacity-20 transition-all"><RotateCcw size={16} /></button>
+              <button onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} className="p-2 hover:bg-white rounded-lg text-slate-500 disabled:opacity-20 transition-all"><RotateCw size={16} /></button>
+            </div>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
-            <button onClick={() => editor.chain().focus().toggleBold().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('bold') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><Bold size={18} /></button>
-            <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('italic') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><Italic size={18} /></button>
-            <button onClick={() => editor.chain().focus().toggleUnderline().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('underline') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><UnderlineIcon size={18} /></button>
-          </div>
+            <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner shrink-0">
+              <button onClick={() => editor.chain().focus().toggleBold().run()} className={`p-2 rounded-lg transition-all ${editor.isActive('bold') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><Bold size={16} /></button>
+              <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`p-2 rounded-lg transition-all ${editor.isActive('italic') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><Italic size={16} /></button>
+              <button onClick={() => editor.chain().focus().toggleUnderline().run()} className={`p-2 rounded-lg transition-all ${editor.isActive('underline') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><UnderlineIcon size={16} /></button>
+            </div>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
-            <button onClick={() => editor.chain().focus().toggleBulletList().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('bulletList') ? 'bg-indigo-600 text-white' : 'hover:bg-white text-slate-600'}`}><ListIcon size={18} /></button>
-            <button onClick={() => editor.chain().focus().toggleOrderedList().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('orderedList') ? 'bg-indigo-600 text-white' : 'hover:bg-white text-slate-600'}`}><ListOrdered size={18} /></button>
-          </div>
+            <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner shrink-0">
+              <button onClick={() => editor.chain().focus().toggleBulletList().run()} className={`p-2 rounded-lg transition-all ${editor.isActive('bulletList') ? 'bg-indigo-600 text-white' : 'hover:bg-white text-slate-600'}`}><ListIcon size={16} /></button>
+              <button onClick={() => editor.chain().focus().toggleOrderedList().run()} className={`p-2 rounded-lg transition-all ${editor.isActive('orderedList') ? 'bg-indigo-600 text-white' : 'hover:bg-white text-slate-600'}`}><ListOrdered size={16} /></button>
+            </div>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
-            <button onClick={() => fileInputRef.current?.click()} className="p-2.5 hover:bg-white rounded-lg text-indigo-600 transition-all"><ImageIcon size={18} /></button>
-            <button onClick={() => editor.commands.clearContent()} className="p-2.5 hover:bg-red-50 rounded-lg text-red-500 transition-all"><Eraser size={18} /></button>
-          </div>
+            <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner shrink-0">
+              <button onClick={() => imageInputRef.current?.click()} className="p-2 hover:bg-white rounded-lg text-indigo-600 transition-all" title="이미지 첨부"><ImageIcon size={16} /></button>
+              <button onClick={() => videoInputRef.current?.click()} className="p-2 hover:bg-white rounded-lg text-indigo-600 transition-all" title="동영상 첨부"><VideoIcon size={16} /></button>
+              <button onClick={() => editor.commands.clearContent()} className="p-2 hover:bg-red-50 rounded-lg text-red-500 transition-all" title="전체 삭제"><Eraser size={16} /></button>
+            </div>
 
-          <div className="flex-1 flex justify-end gap-2">
-            <button onClick={handleAiAssist} disabled={isLoading} className="px-5 py-2.5 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-100 transition-all border border-indigo-200 shadow-sm disabled:opacity-50 min-w-[140px] justify-center">
-              {isLoading ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-              <span>{isLoading ? '생성 중...' : 'AI 도움받기'}</span>
-            </button>
-            <button onClick={handleExportDocx} disabled={isLoading} className="px-5 py-2.5 bg-white text-slate-700 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-50 border border-slate-200 shadow-sm transition-all active:scale-95">
-              <FileDown size={16} />
-              <span className="hidden lg:inline">Word로 저장</span>
-            </button>
-            <button onClick={handleSaveToBoard} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all active:scale-95">
-              <Save size={16} />
-              <span className="hidden md:inline">저장하기</span>
-            </button>
+            <div className="flex-1 flex justify-end gap-2 shrink-0">
+              <button onClick={handleAiAssist} disabled={isLoading} className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-indigo-100 transition-all border border-indigo-200 shadow-sm disabled:opacity-50 min-w-[110px] justify-center">
+                {isLoading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                <span>{isLoading ? '...' : 'AI 도움받기'}</span>
+              </button>
+              <button onClick={handleExportDocx} disabled={isLoading} className="px-4 py-2 bg-white text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-slate-50 border border-slate-200 shadow-sm transition-all active:scale-95">
+                <FileDown size={14} />
+                <span className="hidden sm:inline">Word로 저장</span>
+              </button>
+              <button onClick={handleSaveToBoard} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all active:scale-95">
+                <Save size={14} />
+                <span>저장</span>
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="flex-1 bg-white relative">
-          {/* Removed BubbleMenu component as its corresponding export was missing from @tiptap/react. Primary editor actions remain available in the toolbar. */}
           <EditorContent editor={editor} />
         </div>
       </div>
@@ -334,7 +387,7 @@ const App: React.FC = () => {
                   <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span> {post.createdAt}
                 </div>
                 <h3 className="text-2xl font-black text-slate-900 mb-5 line-clamp-1 pr-12">{post.title}</h3>
-                <p className="text-slate-500 text-sm leading-relaxed line-clamp-4 flex-1 font-medium">{post.plainText || "내용이 없습니다."}</p>
+                <div className="text-slate-500 text-sm leading-relaxed line-clamp-4 flex-1 font-medium overflow-hidden" dangerouslySetInnerHTML={{ __html: post.content.replace(/<img[^>]*>|<video[^>]*>/g, '[미디어]') }}></div>
                 <div className="mt-10 pt-8 border-t border-slate-50 flex items-center justify-between">
                   <button onClick={() => { setTitle(post.title); editor.commands.setContent(post.content); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="text-sm font-black text-indigo-600 flex items-center gap-2 hover:gap-3 transition-all">포스트 불러오기 <RotateCw size={16} /></button>
                 </div>
@@ -344,7 +397,8 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
+      <input type="file" ref={imageInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
+      <input type="file" ref={videoInputRef} onChange={handleVideoUpload} className="hidden" accept="video/*" />
 
       {error && (
         <div className="fixed bottom-10 right-10 bg-slate-900 text-white px-8 py-5 rounded-[24px] shadow-2xl animate-in slide-in-from-bottom-10 flex items-center z-[100] border border-white/10 backdrop-blur-lg">

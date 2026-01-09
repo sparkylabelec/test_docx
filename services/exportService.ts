@@ -56,6 +56,15 @@ const parseNodeContent = async (element: HTMLElement): Promise<(TextRun | ImageR
         }
         return;
       }
+      
+      if (tagName === 'VIDEO') {
+        children.push(new TextRun({
+          text: " [첨부된 동영상 컨텐츠 - Word에서 재생 불가] ",
+          bold: true,
+          color: "FF0000"
+        }));
+        return;
+      }
 
       const newStyles = { ...styles };
       if (tagName === 'STRONG' || tagName === 'B') newStyles.bold = true;
@@ -129,14 +138,11 @@ export const exportDocToDocx = async (title: string, blocks: ContentBlock[]) => 
 
       for (const li of Array.from(node.children)) {
         if (li.tagName.toUpperCase() === 'LI') {
-          // LI can contain a P or text directly.
-          // Tiptap often uses <li><p>text</p></li>
           const liElement = li as HTMLElement;
           const nestedList = Array.from(liElement.childNodes).find(
             child => child instanceof HTMLElement && (child.tagName === 'UL' || child.tagName === 'OL')
           );
 
-          // Content of LI excluding nested list
           const liClone = liElement.cloneNode(true) as HTMLElement;
           if (nestedList) {
             const nestedInClone = Array.from(liClone.childNodes).find(
@@ -182,6 +188,12 @@ export const exportDocToDocx = async (title: string, blocks: ContentBlock[]) => 
           }));
         }
       }
+    }
+    else if (tagName === 'VIDEO') {
+      docChildren.push(new Paragraph({
+        children: [new TextRun({ text: "[동영상 컨텐츠 안내: 웹 버전에서 확인 가능]", italics: true, color: "888888" })],
+        spacing: { before: 100, after: 100 },
+      }));
     }
   };
 
