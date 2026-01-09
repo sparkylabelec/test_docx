@@ -2,13 +2,13 @@
 import { GoogleGenAI, GenerateContentResponse, Part } from "@google/genai";
 import { ContentBlock } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const generateAiWritingAssist = async (
   title: string,
   blocks: ContentBlock[]
 ): Promise<string> => {
   try {
+    // API 호출 직전에 인스턴스를 생성하여 process.env.API_KEY를 안전하게 참조
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const parts: Part[] = [];
     
     let contextText = `Act as a professional writing assistant. Based on this document draft:
