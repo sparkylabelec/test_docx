@@ -4,23 +4,94 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VisionChat AI</title>
+  <title>VisionChat AI - Tiptap Board</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@100;200;300;400;500;600;700;800;900&display=swap');
+    
+    :root {
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+    }
+
     body {
-      font-family: 'Inter', sans-serif;
+      font-family: 'Pretendard', sans-serif;
       background-color: #f8fafc;
       margin: 0;
       padding: 0;
+      color: #1e293b;
     }
+
     #root {
       min-height: 100vh;
     }
+
+    /* Tiptap Editor Custom Styles */
+    .tiptap {
+      outline: none;
+      min-height: 400px;
+    }
+
+    .tiptap p.is-editor-empty:first-child::before {
+      content: attr(data-placeholder);
+      float: left;
+      color: #94a3b8;
+      pointer-events: none;
+      height: 0;
+    }
+
+    .tiptap img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 0.75rem;
+      margin: 2rem 0;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+      transition: transform 0.2s ease;
+    }
+
+    .tiptap img:hover {
+      transform: scale(1.01);
+    }
+
+    .tiptap blockquote {
+      border-left: 4px solid #e2e8f0;
+      padding-left: 1.25rem;
+      font-style: italic;
+      color: #64748b;
+      margin: 1.5rem 0;
+    }
+
+    .tiptap ul, .tiptap ol {
+      padding: 0 1.2rem;
+      margin: 1rem 0;
+    }
+
+    .tiptap ul { list-style-type: disc; }
+    .tiptap ol { list-style-type: decimal; }
+
+    .tiptap hr {
+      border: none;
+      border-top: 2px solid #f1f5f9;
+      margin: 2rem 0;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #e2e8f0;
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #cbd5e1;
+    }
   </style>
   <script>
-    // Robust Shim for process.env in browser environments
     window.process = window.process || { env: {} };
     if (!window.process.env) window.process.env = {};
   </script>
@@ -33,7 +104,15 @@
     "react-dom/": "https://esm.sh/react-dom@19.0.0/",
     "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
     "@google/genai": "https://esm.sh/@google/genai@1.35.0",
-    "docx": "https://esm.sh/docx@9.1.0"
+    "docx": "https://esm.sh/docx@9.1.0",
+    "lucide-react": "https://esm.sh/lucide-react@0.468.0?deps=react@19.0.0",
+    "@tiptap/react": "https://esm.sh/@tiptap/react@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
+    "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
+    "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
+    "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
+    "@tiptap/extension-placeholder": "https://esm.sh/@tiptap/extension-placeholder@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
+    "@tiptap/extension-text-align": "https://esm.sh/@tiptap/extension-text-align@2.11.0?deps=react@19.0.0,react-dom@19.0.0",
+    "@tiptap/extension-bubble-menu": "https://esm.sh/@tiptap/extension-bubble-menu@^3.15.3"
   }
 }
 </script>

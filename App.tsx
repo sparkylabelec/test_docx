@@ -1,437 +1,368 @@
 
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Image from '@tiptap/extension-image';
+import Underline from '@tiptap/extension-underline';
+import Placeholder from '@tiptap/extension-placeholder';
+import TextAlign from '@tiptap/extension-text-align';
+// Changed to named import for better compatibility with Tiptap v2 extensions
+import { BubbleMenu as BubbleMenuExtension } from '@tiptap/extension-bubble-menu';
+
 import { generateAiWritingAssist } from './services/geminiService';
 import { exportDocToDocx } from './services/exportService';
-import { ContentBlock, BlockType } from './types';
+import { 
+  Pencil, Trash2, Save, X, Check, ClipboardList, 
+  Bold, Italic, Underline as UnderlineIcon, 
+  RotateCcw, RotateCw, Eraser, Sparkles, Wand2,
+  Image as ImageIcon, Loader2,
+  List as ListIcon, ListOrdered, Move, GripHorizontal,
+  FileDown
+} from 'lucide-react';
+
+interface Post {
+  id: string;
+  title: string;
+  content: string;
+  plainText: string;
+  createdAt: string;
+}
 
 const App: React.FC = () => {
   const [title, setTitle] = useState('');
-  const [blocks, setBlocks] = useState<ContentBlock[]>([
-    { id: 'initial', type: 'text' as BlockType, content: '' }
-  ]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [posts, setPosts] = useState<Post[]>([]);
+
+  const [showAiPopup, setShowAiPopup] = useState(false);
+  const [aiResult, setAiResult] = useState('');
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
   
-  // History for Undo/Redo
-  const [history, setHistory] = useState<ContentBlock[][]>([[{ id: 'initial', type: 'text' as BlockType, content: '' }]]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  const [popupPos, setPopupPos] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
 
-  const pushToHistory = useCallback((newBlocks: ContentBlock[]) => {
-    setHistory(prev => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push(JSON.parse(JSON.stringify(newBlocks)));
-      if (newHistory.length > 50) newHistory.shift();
-      return newHistory;
-    });
-    setHistoryIndex(prev => Math.min(prev + 1, 49));
-  }, [historyIndex]);
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      Underline,
+      Image.configure({
+        HTMLAttributes: {
+          class: 'rounded-lg shadow-lg max-w-full my-4',
+        },
+      }),
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+      }),
+      Placeholder.configure({
+        placeholder: '당신의 이야기를 이곳에 적어보세요...',
+      }),
+      // Register the BubbleMenu extension to enable the BubbleMenu React component
+      BubbleMenuExtension,
+    ],
+    content: '',
+    editorProps: {
+      attributes: {
+        class: 'prose prose-lg max-w-none focus:outline-none min-h-[500px] text-slate-800 leading-relaxed p-8',
+      },
+    },
+  });
 
-  const updateBlock = (id: string, content: string) => {
-    setBlocks(prev => prev.map(b => b.id === id ? { ...b, content } : b));
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    dragStartRef.current = {
+      x: e.clientX - popupPos.x,
+      y: e.clientY - popupPos.y,
+    };
+    document.body.style.userSelect = 'none';
   };
 
-  const handleUndo = () => {
-    if (historyIndex > 0) {
-      const prevIndex = historyIndex - 1;
-      setHistoryIndex(prevIndex);
-      setBlocks(JSON.parse(JSON.stringify(history[prevIndex])));
-    }
-  };
-
-  const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      const nextIndex = historyIndex + 1;
-      setHistoryIndex(nextIndex);
-      setBlocks(JSON.parse(JSON.stringify(history[nextIndex])));
-    }
-  };
-
-  const handleFormat = (command: string, value?: string) => {
-    document.execCommand(command, false, value);
-    setTimeout(() => pushToHistory(blocks), 100);
-  };
-
-  const handleTypography = () => {
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-    
-    const parent = selection.anchorNode?.parentElement;
-    if (parent?.tagName === 'H1') {
-      document.execCommand('formatBlock', false, 'p');
-    } else if (parent?.tagName === 'H2') {
-      document.execCommand('formatBlock', false, 'h1');
-    } else {
-      document.execCommand('formatBlock', false, 'h2');
-    }
-    setTimeout(() => pushToHistory(blocks), 100);
-  };
-
-  const handleEraser = () => {
-    if (window.confirm('모든 내용을 지우시겠습니까?')) {
-      const resetBlocks: ContentBlock[] = [{ id: 'initial', type: 'text' as const, content: '' }];
-      setBlocks(resetBlocks);
-      pushToHistory(resetBlocks);
-      setTitle('');
-    }
-  };
-
-  const removeBlock = (id: string) => {
-    const blockToRemove = blocks.find(b => b.id === id);
-    if (blockToRemove?.type !== 'text' && blockToRemove?.content.startsWith('blob:')) {
-      URL.revokeObjectURL(blockToRemove.content);
-    }
-
-    if (blocks.length <= 1) {
-      const reset: ContentBlock[] = [{ id: 'initial', type: 'text' as const, content: '' }];
-      setBlocks(reset);
-      pushToHistory(reset);
-      return;
-    }
-    const next = blocks.filter(b => b.id !== id);
-    setBlocks(next);
-    pushToHistory(next);
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    setIsProcessingFiles(true);
-    setError(null);
-
-    const newBlocks: ContentBlock[] = [];
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const isVideo = file.type.startsWith('video/');
-      
-      const objectUrl = URL.createObjectURL(file);
-      
-      newBlocks.push({
-        id: Math.random().toString(36).substr(2, 9),
-        type: isVideo ? 'video' : 'image',
-        content: objectUrl,
-        mimeType: file.type
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      setPopupPos({
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y,
       });
-      
-      newBlocks.push({
-        id: Math.random().toString(36).substr(2, 9),
-        type: 'text',
-        content: ''
-      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.body.style.userSelect = 'auto';
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
     }
 
-    setBlocks(prev => {
-      const next = [...prev, ...newBlocks];
-      pushToHistory(next);
-      return next;
-    });
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
-    setIsProcessingFiles(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    if (videoInputRef.current) videoInputRef.current.value = '';
-  };
+  useEffect(() => {
+    if (showAiPopup) {
+      setPopupPos({ x: 0, y: 0 });
+    }
+  }, [showAiPopup]);
 
   const handleAiAssist = async () => {
-    if (blocks.every(b => b.type === 'text' && !b.content.trim())) return;
+    if (!editor) return;
+
+    const { from, to } = editor.state.selection;
+    const isSelectionActive = from !== to;
+    const selectedText = isSelectionActive 
+      ? editor.state.doc.textBetween(from, to, ' ') 
+      : null;
+
+    if (!title && !editor.getText()) {
+      setError("제목이나 내용을 입력해주세요!");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
-    try {
-      const processedBlocks = await Promise.all(blocks.map(async (block) => {
-        if ((block.type === 'image' || block.type === 'video') && block.content.startsWith('blob:')) {
-          const response = await fetch(block.content);
-          const blob = await response.blob();
-          return new Promise<ContentBlock>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              resolve({
-                ...block,
-                content: (reader.result as string).split(',')[1] 
-              });
-            };
-            reader.readAsDataURL(blob);
-          });
-        }
-        return block;
-      }));
+    setIsSelectionMode(isSelectionActive);
 
-      const suggestion = await generateAiWritingAssist(title, processedBlocks);
-      const aiBlock: ContentBlock = {
-        id: 'ai-' + Date.now(),
-        type: 'text',
-        content: `<div><br><strong>--- AI Suggestion ---</strong><br>${suggestion.replace(/\n/g, '<br>')}</div>`
-      };
-      setBlocks(prev => {
-        const next = [...prev, aiBlock];
-        pushToHistory(next);
-        return next;
-      });
+    try {
+      const contextContent = isSelectionActive ? (selectedText || "") : editor.getHTML();
+      const suggestion = await generateAiWritingAssist(
+        title, 
+        [{ id: '1', type: 'text', content: contextContent }],
+        isSelectionActive
+      );
+      
+      setAiResult(suggestion);
+      setShowAiPopup(true);
     } catch (err: any) {
-      console.error(err);
-      setError("AI 처리에 실패했습니다. " + err.message);
+      setError("AI 처리 중 오류가 발생했습니다.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleExport = async () => {
+  const applyAiResult = () => {
+    if (!editor) return;
+    if (isSelectionMode) {
+      editor.chain().focus().insertContent(aiResult).run();
+    } else {
+      editor.chain().focus().insertContent(`<p>${aiResult}</p>`).run();
+    }
+    setShowAiPopup(false);
+    setAiResult('');
+  };
+
+  const handleSaveToBoard = () => {
+    if (!editor || !title.trim()) {
+      setError("제목을 입력해주세요.");
+      return;
+    }
+    
+    const newPost: Post = {
+      id: Math.random().toString(36).substr(2, 9),
+      title,
+      content: editor.getHTML(),
+      plainText: editor.getText(),
+      createdAt: new Date().toLocaleString('ko-KR', { 
+        year: 'numeric', month: 'long', day: 'numeric', 
+        hour: '2-digit', minute: '2-digit' 
+      }),
+    };
+
+    setPosts(prev => [newPost, ...prev]);
+    setTitle('');
+    editor.commands.clearContent();
+    setError(null);
+  };
+
+  const handleExportDocx = async () => {
+    if (!editor) return;
     setIsLoading(true);
     try {
-      await exportDocToDocx(title, blocks);
-    } catch (e: any) {
-      console.error(e);
-      setError("문서 내보내기에 실패했습니다.");
+      const htmlContent = editor.getHTML();
+      await exportDocToDocx(title, [{ id: 'export', type: 'text', content: htmlContent }]);
+    } catch (err) {
+      console.error(err);
+      setError("파일 내보내기 중 오류가 발생했습니다.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const colorPalette = [
-    '#000000', '#434343', '#666666', '#999999', '#cccccc', '#efefef', '#f3f3f3', '#ffffff',
-    '#980000', '#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#4a86e8', '#0000ff', '#9900ff', '#ff00ff',
-    '#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3', '#d9d2e9', '#ead1dc'
-  ];
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editor) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const src = event.target?.result as string;
+      editor.chain().focus().setImage({ src }).run();
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
-  // Calculate number of significant items for the badge
-  const contentCount = useMemo(() => {
-    return blocks.filter(b => b.type !== 'text' || b.content.replace(/<[^>]*>?/gm, '').trim().length > 0).length;
-  }, [blocks]);
+  if (!editor) return null;
 
   return (
-    <div className="min-h-screen bg-gray-100 text-gray-800 p-4 md:p-8">
-      <div className="max-w-4xl mx-auto border border-gray-200 bg-white shadow-xl flex flex-col min-h-[90vh] rounded-sm">
-        
-        {/* Top Header */}
-        <div className="p-6 border-b border-gray-200">
-          <h1 className="text-2xl font-bold mb-6 text-gray-900 tracking-tight">글쓰기</h1>
-          <div className="flex items-center space-x-4">
-            <label className="text-sm font-semibold text-gray-500 min-w-[40px]">제목</label>
-            <input 
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="제목을 입력하세요"
-              className="flex-1 border border-gray-300 rounded-sm p-2.5 focus:border-blue-400 focus:ring-1 focus:ring-blue-100 outline-none transition-all"
-            />
-            <span className="text-red-500 font-bold">*</span>
-          </div>
-        </div>
-
-        {/* Action Tags */}
-        <div className="p-4 flex flex-wrap gap-2 border-b border-gray-100 bg-gray-50/50">
-          {["서비스 이용약관", "운영정책", "이용제한 사유 안내"].map(tag => (
-            <button key={tag} className="px-3 py-1.5 bg-white border border-gray-300 rounded-sm text-[11px] font-bold text-gray-600 hover:bg-gray-50 transition-colors shadow-sm">
-              {tag}
-            </button>
-          ))}
-          <button className="px-3 py-1.5 bg-blue-600 text-white rounded-sm text-[11px] font-bold flex items-center space-x-1.5 shadow-sm hover:bg-blue-700">
-            <i className="fas fa-info-circle"></i>
-            <span>작성 가이드</span>
-          </button>
-        </div>
-
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center p-2 bg-[#f8fafc] border-b border-gray-200 gap-1 overflow-x-auto no-scrollbar sticky top-0 z-10">
-          <div className="flex space-x-1 px-2 border-r border-gray-300">
-            <button onClick={handleUndo} disabled={historyIndex === 0} className={`p-2 hover:bg-gray-200 rounded ${historyIndex === 0 ? 'text-gray-300' : 'text-gray-600'}`} title="Undo">
-              <i className="fas fa-undo"></i>
-            </button>
-            <button onClick={handleRedo} disabled={historyIndex === history.length - 1} className={`p-2 hover:bg-gray-200 rounded ${historyIndex === history.length - 1 ? 'text-gray-300' : 'text-gray-600'}`} title="Redo">
-              <i className="fas fa-redo"></i>
-            </button>
-          </div>
-          <div className="flex space-x-1 px-2 border-r border-gray-300">
-            <button onClick={handleTypography} className="p-2 hover:bg-gray-200 rounded font-serif italic text-lg text-gray-600" title="Typography">
-              <i className="fas fa-paragraph"></i>
-            </button>
-          </div>
-          <div className="flex space-x-1 px-2 border-r border-gray-300 font-bold text-gray-700">
-            <button onClick={() => handleFormat('bold')} className="p-2 hover:bg-gray-200 rounded w-8" title="Bold">B</button>
-            <button onClick={() => handleFormat('underline')} className="p-2 hover:bg-gray-200 rounded w-8 underline" title="Underline">U</button>
-            <button onClick={() => handleFormat('italic')} className="p-2 hover:bg-gray-200 rounded w-8 italic font-serif" title="Italic">I</button>
-            <div className="relative group">
-              <button className="p-2 hover:bg-gray-200 rounded text-xs flex flex-col items-center" title="Color">
-                <span className="leading-none">A</span>
-                <div className="w-4 h-1 bg-red-500 mt-0.5"></div>
-              </button>
-              <div className="absolute hidden group-hover:block bg-white border border-gray-200 shadow-xl rounded p-3 top-full left-0 z-30 min-w-[200px]">
-                <div className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-wider">Text Color</div>
-                <div className="grid grid-cols-8 gap-1">
-                  {colorPalette.map(color => (
-                    <button 
-                      key={color} 
-                      onClick={() => handleFormat('foreColor', color)}
-                      className="w-5 h-5 rounded-sm border border-gray-100 hover:scale-110 transition-transform" 
-                      style={{ backgroundColor: color }}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex space-x-1 px-2 border-r border-gray-300">
-            <button onClick={() => handleFormat('outdent')} className="p-2 hover:bg-gray-200 rounded text-gray-600" title="Decrease Indent">
-              <i className="fas fa-outdent"></i>
-            </button>
-            <button onClick={() => handleFormat('indent')} className="p-2 hover:bg-gray-200 rounded text-gray-600" title="Increase Indent">
-              <i className="fas fa-indent"></i>
-            </button>
-          </div>
-
-          <div className="flex space-x-1 px-2 border-r border-gray-300">
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 hover:bg-blue-50 rounded text-blue-600 transition-colors"
-              title="이미지 추가"
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 p-4 md:p-10 flex flex-col items-center">
+      {showAiPopup && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none">
+          <div className="absolute inset-0 bg-slate-900/10 animate-in fade-in duration-200 pointer-events-auto" onClick={() => setShowAiPopup(false)}></div>
+          <div 
+            style={{ 
+              transform: `translate(${popupPos.x}px, ${popupPos.y}px)`,
+              transition: isDragging ? 'none' : 'transform 0.2s ease-out'
+            }}
+            className="relative bg-white w-full max-w-2xl rounded-[32px] shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden border border-slate-200 flex flex-col max-h-[85vh] pointer-events-auto"
+          >
+            <div 
+              onMouseDown={handleMouseDown}
+              className={`px-8 py-5 bg-indigo-600 flex items-center justify-between text-white cursor-grab group ${isDragging ? 'cursor-grabbing' : ''}`}
             >
-              <i className="fas fa-image text-lg"></i>
-            </button>
-            <button onClick={handleEraser} className="p-2 hover:bg-red-50 rounded text-red-400" title="Clear/Eraser">
-              <i className="fas fa-eraser"></i>
-            </button>
-          </div>
-          <div className="ml-auto flex items-center space-x-3 pr-2">
-             <button 
-              onClick={handleAiAssist}
-              disabled={isLoading}
-              className={`px-5 py-2 rounded-full text-xs font-bold flex items-center space-x-2 shadow-sm transition-all ${
-                isLoading ? 'bg-gray-100 text-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:shadow-md hover:scale-[1.02] active:scale-95'
-              }`}
-             >
-               <i className={`fas ${isLoading ? 'fa-spinner animate-spin' : 'fa-magic'}`}></i>
-               <span>AI 초안 작성</span>
-             </button>
-          </div>
-        </div>
-
-        {/* Editor Area */}
-        <div className="flex-1 bg-white p-8 overflow-y-auto no-scrollbar min-h-[500px] relative">
-          {isProcessingFiles && (
-            <div className="absolute inset-0 bg-white/50 z-20 flex items-center justify-center backdrop-blur-[1px]">
-               <div className="flex flex-col items-center">
-                  <i className="fas fa-spinner animate-spin text-3xl text-blue-600 mb-2"></i>
-                  <span className="text-sm font-medium text-gray-600">파일을 처리 중입니다...</span>
-               </div>
-            </div>
-          )}
-          <div className="space-y-4">
-            {blocks.map((block, index) => (
-              <div key={block.id} className="relative group animate-in fade-in duration-300">
-                {block.type === 'text' ? (
-                  <div
-                    contentEditable
-                    suppressContentEditableWarning
-                    onBlur={(e) => updateBlock(block.id, e.currentTarget.innerHTML)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Tab') {
-                        e.preventDefault();
-                        if (e.shiftKey) {
-                          handleFormat('outdent');
-                        } else {
-                          handleFormat('indent');
-                        }
-                      }
-                    }}
-                    dangerouslySetInnerHTML={{ __html: block.content || (index === 0 && blocks.length === 1 ? '<span class="text-gray-300">내용을 입력하세요...</span>' : '') }}
-                    className="w-full outline-none text-gray-800 leading-relaxed text-lg min-h-[1.5em] bg-transparent focus:ring-0"
-                  />
-                ) : block.type === 'image' ? (
-                  <div className="my-6 relative inline-block group/img max-w-full">
-                    <img 
-                      src={block.content} 
-                      alt="uploaded" 
-                      className="max-h-[600px] w-auto rounded-sm border border-gray-100 shadow-sm transition-transform hover:scale-[1.005]" 
-                    />
-                    <button 
-                      onClick={() => removeBlock(block.id)}
-                      className="absolute top-2 right-2 bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity shadow-lg hover:bg-red-600"
-                    >
-                      <i className="fas fa-trash-alt text-xs"></i>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="my-6 relative block group/vid max-w-full">
-                    <div className="aspect-video bg-black rounded-sm overflow-hidden border border-gray-100 shadow-sm">
-                      <video 
-                        src={block.content} 
-                        controls 
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                    <button 
-                      onClick={() => removeBlock(block.id)}
-                      className="absolute top-2 right-2 bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center opacity-0 group-hover/vid:opacity-100 transition-opacity shadow-lg hover:bg-red-600 z-10"
-                    >
-                      <i className="fas fa-trash-alt text-xs"></i>
-                    </button>
-                  </div>
-                )}
-                <button 
-                  onClick={() => removeBlock(block.id)}
-                  className="absolute -left-10 top-0 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-2"
-                >
-                  <i className="fas fa-times"></i>
-                </button>
+              <div className="flex items-center gap-3">
+                <GripHorizontal size={20} className="text-indigo-300 group-hover:text-white transition-colors" />
+                <Sparkles size={24} className="animate-pulse" />
+                <h3 className="text-xl font-bold tracking-tight">AI 편집 제안</h3>
               </div>
-            ))}
+              <button onClick={() => setShowAiPopup(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors active:scale-90">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-8 overflow-y-auto flex-1 bg-white">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-slate-800 font-medium leading-relaxed whitespace-pre-wrap shadow-inner">
+                {aiResult}
+              </div>
+            </div>
+
+            <div className="px-8 py-6 bg-slate-50 border-t border-slate-200 flex gap-3">
+              <button onClick={() => setShowAiPopup(false)} className="flex-1 px-6 py-3 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-100 transition-all active:scale-95 shadow-sm">취소</button>
+              <button onClick={applyAiResult} className="flex-[2] px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 shadow-lg transition-all active:scale-95">
+                <Check size={20} /> 에디터에 적용하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-4xl w-full bg-white shadow-2xl shadow-slate-200/50 rounded-3xl overflow-hidden flex flex-col mb-16 border border-slate-100">
+        <div className="px-10 pt-10 pb-4 text-left">
+          <div className="flex items-center mb-6">
+            <span className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center mr-4 text-white shadow-xl shadow-indigo-100">
+              <Pencil size={24} />
+            </span>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">새로운 포스트 작성</h1>
+          </div>
+          <input 
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="포스트 제목을 입력하세요"
+            className="w-full text-4xl font-black border-none py-4 focus:ring-0 outline-none transition-colors placeholder:text-slate-200"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center px-6 py-3 bg-white/80 backdrop-blur-md border-y border-slate-100 gap-2 sticky top-0 z-50">
+          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
+            <button onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} className="p-2.5 hover:bg-white rounded-lg text-slate-500 disabled:opacity-20 transition-all"><RotateCcw size={18} /></button>
+            <button onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} className="p-2.5 hover:bg-white rounded-lg text-slate-500 disabled:opacity-20 transition-all"><RotateCw size={18} /></button>
+          </div>
+
+          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
+            <button onClick={() => editor.chain().focus().toggleBold().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('bold') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><Bold size={18} /></button>
+            <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('italic') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><Italic size={18} /></button>
+            <button onClick={() => editor.chain().focus().toggleUnderline().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('underline') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'hover:bg-white text-slate-600'}`}><UnderlineIcon size={18} /></button>
+          </div>
+
+          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
+            <button onClick={() => editor.chain().focus().toggleBulletList().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('bulletList') ? 'bg-indigo-600 text-white' : 'hover:bg-white text-slate-600'}`}><ListIcon size={18} /></button>
+            <button onClick={() => editor.chain().focus().toggleOrderedList().run()} className={`p-2.5 rounded-lg transition-all ${editor.isActive('orderedList') ? 'bg-indigo-600 text-white' : 'hover:bg-white text-slate-600'}`}><ListOrdered size={18} /></button>
+          </div>
+
+          <div className="flex items-center gap-1 p-1 bg-slate-50 rounded-xl border border-slate-200 shadow-inner">
+            <button onClick={() => fileInputRef.current?.click()} className="p-2.5 hover:bg-white rounded-lg text-indigo-600 transition-all"><ImageIcon size={18} /></button>
+            <button onClick={() => editor.commands.clearContent()} className="p-2.5 hover:bg-red-50 rounded-lg text-red-500 transition-all"><Eraser size={18} /></button>
+          </div>
+
+          <div className="flex-1 flex justify-end gap-2">
+            <button onClick={handleAiAssist} disabled={isLoading} className="px-5 py-2.5 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-100 transition-all border border-indigo-200 shadow-sm disabled:opacity-50 min-w-[140px] justify-center">
+              {isLoading ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+              <span>{isLoading ? '생성 중...' : 'AI 도움받기'}</span>
+            </button>
+            <button onClick={handleExportDocx} disabled={isLoading} className="px-5 py-2.5 bg-white text-slate-700 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-50 border border-slate-200 shadow-sm transition-all active:scale-95">
+              <FileDown size={16} />
+              <span className="hidden lg:inline">Word로 저장</span>
+            </button>
+            <button onClick={handleSaveToBoard} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all active:scale-95">
+              <Save size={16} />
+              <span className="hidden md:inline">저장하기</span>
+            </button>
           </div>
         </div>
 
-        {/* Bottom Utility Bar */}
-        <div className="p-3 bg-white border-t border-gray-200 flex justify-center items-center space-x-10">
-           <button className="text-gray-500 hover:text-blue-500 transition-colors p-2"><i className="far fa-smile text-2xl"></i></button>
-           <button className="text-gray-500 hover:text-blue-500 transition-colors p-2"><i className="fas fa-th text-2xl"></i></button>
-           <button 
-            onClick={() => videoInputRef.current?.click()}
-            className="text-gray-500 hover:text-blue-500 transition-colors p-2"
-            title="동영상 첨부"
-           >
-            <i className="fas fa-video text-2xl"></i>
-           </button>
-           <button className="text-gray-500 hover:text-blue-500 transition-colors p-2"><i className="fas fa-code text-2xl"></i></button>
-           <button 
-            onClick={handleExport}
-            disabled={isLoading}
-            className={`text-gray-500 hover:text-blue-600 transition-all relative p-2 active:scale-90 ${isLoading ? 'animate-pulse' : ''}`}
-            title="문서 다운로드"
-           >
-             <i className="fas fa-file-download text-2xl"></i>
-             {contentCount > 0 && (
-                <span className="absolute -top-1 -right-2 bg-white border-2 border-red-500 text-red-500 text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black shadow-sm">
-                  {contentCount}
-                </span>
-             )}
-           </button>
+        <div className="flex-1 bg-white relative">
+          {editor && (
+            <BubbleMenu editor={editor} tippyOptions={{ duration: 150 }}>
+              <div className="flex items-center bg-slate-900 text-white rounded-2xl shadow-2xl overflow-hidden p-1.5 border border-white/20 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
+                <button onClick={handleAiAssist} disabled={isLoading} className="flex items-center gap-2 px-4 py-2 hover:bg-indigo-600 rounded-xl transition-all text-xs font-bold">
+                  {isLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} className="text-indigo-400" />} AI 편집
+                </button>
+                <div className="w-[1px] h-4 bg-white/20 mx-1"></div>
+                <button onClick={() => editor.chain().focus().toggleBold().run()} className={`p-2 hover:bg-white/10 rounded-lg transition-all ${editor.isActive('bold') ? 'text-indigo-400' : ''}`}><Bold size={16} /></button>
+                <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`p-2 hover:bg-white/10 rounded-lg transition-all ${editor.isActive('italic') ? 'text-indigo-400' : ''}`}><Italic size={16} /></button>
+              </div>
+            </BubbleMenu>
+          )}
+          <EditorContent editor={editor} />
         </div>
       </div>
 
-      <input 
-        type="file" 
-        multiple 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        className="hidden" 
-        accept="image/*"
-      />
-      <input 
-        type="file" 
-        multiple
-        ref={videoInputRef} 
-        onChange={handleFileChange} 
-        className="hidden" 
-        accept="video/*"
-      />
+      <div className="max-w-4xl w-full">
+        <div className="flex items-center justify-between mb-10">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-10 bg-indigo-600 rounded-full"></div>
+            <h2 className="text-3xl font-black text-slate-900 tracking-tight">최근 저장된 글</h2>
+          </div>
+          <div className="text-sm font-bold text-slate-400 px-4 py-1.5 bg-white rounded-full border border-slate-100">총 {posts.length}개의 포스트</div>
+        </div>
+        
+        {posts.length === 0 ? (
+          <div className="bg-white border-2 border-dashed border-slate-200 rounded-[32px] p-24 flex flex-col items-center justify-center text-center">
+            <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center mb-6 text-slate-300 shadow-inner"><ClipboardList size={40} /></div>
+            <h3 className="text-xl font-bold text-slate-600">아직 작성된 글이 없네요</h3>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+            {posts.map(post => (
+              <div key={post.id} className="bg-white border border-slate-100 rounded-[32px] p-10 shadow-sm hover:shadow-2xl transition-all group flex flex-col relative overflow-hidden">
+                <div className="absolute top-8 right-8 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                  <button onClick={() => setPosts(prev => prev.filter(p => p.id !== post.id))} className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"><Trash2 size={20} /></button>
+                </div>
+                <div className="text-[12px] font-black text-indigo-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span> {post.createdAt}
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 mb-5 line-clamp-1 pr-12">{post.title}</h3>
+                <p className="text-slate-500 text-sm leading-relaxed line-clamp-4 flex-1 font-medium">{post.plainText || "내용이 없습니다."}</p>
+                <div className="mt-10 pt-8 border-t border-slate-50 flex items-center justify-between">
+                  <button onClick={() => { setTitle(post.title); editor.commands.setContent(post.content); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="text-sm font-black text-indigo-600 flex items-center gap-2 hover:gap-3 transition-all">포스트 불러오기 <RotateCw size={16} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
 
       {error && (
-        <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-3 rounded-full shadow-2xl animate-in slide-in-from-bottom-10 flex items-center">
-          <i className="fas fa-exclamation-triangle mr-2"></i>
-          <span className="mr-4">{error}</span>
-          <button onClick={() => setError(null)} className="hover:text-gray-200"><i className="fas fa-times"></i></button>
+        <div className="fixed bottom-10 right-10 bg-slate-900 text-white px-8 py-5 rounded-[24px] shadow-2xl animate-in slide-in-from-bottom-10 flex items-center z-[100] border border-white/10 backdrop-blur-lg">
+          <div className="bg-amber-500 p-2 rounded-xl mr-5"><X size={20} /></div>
+          <span className="text-sm font-bold">{error}</span>
+          <button onClick={() => setError(null)} className="ml-8 text-slate-400 hover:text-white transition-colors"><X size={24} /></button>
         </div>
       )}
     </div>

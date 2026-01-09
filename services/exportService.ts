@@ -1,10 +1,7 @@
 
-import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType } from "docx";
+import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, LevelFormat } from "docx";
 import { ContentBlock } from "../types";
 
-/**
- * Utility to convert various sources (DataURL, Blob URL) to Uint8Array
- */
 const getFileBuffer = async (url: string): Promise<Uint8Array | null> => {
   try {
     if (url.startsWith('data:')) {
@@ -28,139 +25,191 @@ const getFileBuffer = async (url: string): Promise<Uint8Array | null> => {
 };
 
 /**
- * Captures a still frame from a video URL at 0.5 seconds
+ * Recursively parses HTML nodes into docx TextRuns or ImageRuns.
  */
-const captureVideoFrame = async (videoUrl: string): Promise<Uint8Array | null> => {
-  return new Promise((resolve) => {
-    const video = document.createElement('video');
-    video.src = videoUrl;
-    video.crossOrigin = 'anonymous';
-    video.muted = true;
-    video.currentTime = 0.5; // Capture at 0.5s mark
+const parseNodeContent = async (element: HTMLElement): Promise<(TextRun | ImageRun)[]> => {
+  const children: (TextRun | ImageRun)[] = [];
 
-    const timeout = setTimeout(() => {
-      resolve(null);
-    }, 5000); // 5s timeout
-
-    video.onloadeddata = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          clearTimeout(timeout);
-          if (blob) {
-            blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
-          } else {
-            resolve(null);
-          }
-        }, 'image/jpeg');
-      } else {
-        clearTimeout(timeout);
-        resolve(null);
+  const walk = async (node: Node, styles: { bold?: boolean; italics?: boolean; underline?: boolean }) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.textContent) {
+        children.push(new TextRun({
+          text: node.textContent,
+          bold: styles.bold,
+          italics: styles.italics,
+          underline: styles.underline ? {} : undefined,
+        }));
       }
-    };
+    } else if (node instanceof HTMLElement) {
+      const tagName = node.tagName.toUpperCase();
+      
+      if (tagName === 'IMG') {
+        const src = node.getAttribute('src');
+        if (src) {
+          const buffer = await getFileBuffer(src);
+          if (buffer) {
+            children.push(new ImageRun({
+              data: buffer,
+              transformation: { width: 550, height: 350 },
+            }));
+          }
+        }
+        return;
+      }
 
-    video.onerror = () => {
-      clearTimeout(timeout);
-      resolve(null);
-    };
-  });
-};
+      const newStyles = { ...styles };
+      if (tagName === 'STRONG' || tagName === 'B') newStyles.bold = true;
+      if (tagName === 'EM' || tagName === 'I') newStyles.italics = true;
+      if (tagName === 'U') newStyles.underline = true;
 
-/**
- * Removes HTML tags from a string for basic text export
- */
-const cleanHtml = (html: string) => {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  return doc.body.textContent || "";
+      for (const child of Array.from(node.childNodes)) {
+        await walk(child, newStyles);
+      }
+    }
+  };
+
+  for (const child of Array.from(element.childNodes)) {
+    await walk(child, {});
+  }
+  return children;
 };
 
 export const exportDocToDocx = async (title: string, blocks: ContentBlock[]) => {
-  const children: any[] = [
-    new Paragraph({
-      text: title || "Untitled Document",
-      heading: HeadingLevel.HEADING_1,
-      alignment: AlignmentType.LEFT,
-      spacing: { after: 400 },
-    }),
-  ];
+  const docChildren: any[] = [];
 
-  for (const block of blocks) {
-    if (block.type === 'text') {
-      const text = cleanHtml(block.content).trim();
-      if (text) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: text,
-                size: 24,
-              }),
-            ],
-            spacing: { after: 300 },
-          })
-        );
-      }
-    } else if (block.type === 'image') {
-      const buffer = await getFileBuffer(block.content);
-      if (buffer) {
-        children.push(
-          new Paragraph({
-            children: [
-              new ImageRun({
-                data: buffer,
-                transformation: { width: 500, height: 350 },
-              }),
-            ],
-            spacing: { after: 300, before: 100 },
-          })
-        );
-      }
-    } else if (block.type === 'video') {
-      // User requested to include "video photos" (stills) in the export
-      const buffer = await captureVideoFrame(block.content);
-      if (buffer) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({ text: "[Video Snapshot]", italics: true, color: "666666" })
-            ],
-            spacing: { after: 100 },
-          }),
-          new Paragraph({
-            children: [
-              new ImageRun({
-                data: buffer,
-                transformation: { width: 500, height: 350 },
-              }),
-            ],
-            spacing: { after: 300 },
-          })
-        );
-      } else {
-        // Fallback placeholder if frame capture fails
-        children.push(
-          new Paragraph({
-            text: `[Video Attachment: ${block.mimeType || 'Video'}]`,
-            spacing: { after: 300 },
-          })
-        );
+  // 1. Title
+  docChildren.push(new Paragraph({
+    text: title || "제목 없음",
+    heading: HeadingLevel.HEADING_1,
+    alignment: AlignmentType.LEFT,
+    spacing: { after: 400 },
+  }));
+
+  // 2. Parse HTML content
+  const htmlContent = blocks[0]?.content || '';
+  const parser = new DOMParser();
+  const docHtml = parser.parseFromString(htmlContent, 'text/html');
+  const bodyNodes = Array.from(docHtml.body.childNodes);
+
+  const processBlockNode = async (node: Node, listContext?: { reference: string; level: number }) => {
+    if (!(node instanceof HTMLElement)) return;
+
+    const tagName = node.tagName.toUpperCase();
+
+    // Headings
+    const headingMap: Record<string, HeadingLevel> = {
+      'H1': HeadingLevel.HEADING_1,
+      'H2': HeadingLevel.HEADING_2,
+      'H3': HeadingLevel.HEADING_3,
+      'H4': HeadingLevel.HEADING_4,
+      'H5': HeadingLevel.HEADING_5,
+      'H6': HeadingLevel.HEADING_6,
+    };
+
+    if (headingMap[tagName]) {
+      docChildren.push(new Paragraph({
+        children: await parseNodeContent(node),
+        heading: headingMap[tagName],
+        spacing: { before: 200, after: 200 },
+      }));
+    } 
+    else if (tagName === 'P' || tagName === 'DIV') {
+      const children = await parseNodeContent(node);
+      if (children.length > 0) {
+        docChildren.push(new Paragraph({
+          children: children,
+          spacing: { after: 120 },
+        }));
       }
     }
+    else if (tagName === 'UL' || tagName === 'OL') {
+      const isOrdered = tagName === 'OL';
+      const level = (listContext?.level ?? -1) + 1;
+      const ref = isOrdered ? "main-numbering" : "bullet-numbering";
+
+      for (const li of Array.from(node.children)) {
+        if (li.tagName.toUpperCase() === 'LI') {
+          // LI can contain a P or text directly.
+          // Tiptap often uses <li><p>text</p></li>
+          const liElement = li as HTMLElement;
+          const nestedList = Array.from(liElement.childNodes).find(
+            child => child instanceof HTMLElement && (child.tagName === 'UL' || child.tagName === 'OL')
+          );
+
+          // Content of LI excluding nested list
+          const liClone = liElement.cloneNode(true) as HTMLElement;
+          if (nestedList) {
+            const nestedInClone = Array.from(liClone.childNodes).find(
+              child => child instanceof HTMLElement && (child.tagName === 'UL' || child.tagName === 'OL')
+            );
+            if (nestedInClone) liClone.removeChild(nestedInClone);
+          }
+
+          docChildren.push(new Paragraph({
+            children: await parseNodeContent(liClone),
+            bullet: isOrdered ? undefined : { level: level },
+            numbering: isOrdered ? { reference: ref, level: level } : undefined,
+            spacing: { after: 100 },
+          }));
+
+          if (nestedList) {
+            await processBlockNode(nestedList, { reference: ref, level: level });
+          }
+        }
+      }
+    }
+    else if (tagName === 'BLOCKQUOTE') {
+      docChildren.push(new Paragraph({
+        children: await parseNodeContent(node),
+        indent: { left: 720 },
+        spacing: { before: 200, after: 200 },
+      }));
+    }
+    else if (tagName === 'HR') {
+      docChildren.push(new Paragraph({
+        thematicBreak: true,
+        spacing: { before: 400, after: 400 },
+      }));
+    }
+    else if (tagName === 'IMG') {
+      const src = node.getAttribute('src');
+      if (src) {
+        const buffer = await getFileBuffer(src);
+        if (buffer) {
+          docChildren.push(new Paragraph({
+            children: [new ImageRun({ data: buffer, transformation: { width: 550, height: 350 } })],
+            spacing: { before: 200, after: 200 },
+          }));
+        }
+      }
+    }
+  };
+
+  for (const node of bodyNodes) {
+    await processBlockNode(node);
   }
 
   const doc = new Document({
-    sections: [{ children }],
+    numbering: {
+      config: [
+        {
+          reference: "main-numbering",
+          levels: [
+            { level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.START },
+            { level: 1, format: LevelFormat.LOWER_LETTER, text: "%2.", alignment: AlignmentType.START },
+            { level: 2, format: LevelFormat.LOWER_ROMAN, text: "%3.", alignment: AlignmentType.START },
+          ],
+        },
+      ],
+    },
+    sections: [{ children: docChildren }],
   });
 
   const blob = await Packer.toBlob(doc);
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${title || 'Document'}-${new Date().toISOString().split('T')[0]}.docx`;
+  link.download = `${title || '문서'}-${new Date().toISOString().split('T')[0]}.docx`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
