@@ -1,0 +1,7 @@
+{
+  "name": "VisionChat AI",
+  "description": "A sophisticated multimodal interface for interacting with Gemini AI using both text and images. Upload photos and ask questions to get instant, intelligent insights.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
