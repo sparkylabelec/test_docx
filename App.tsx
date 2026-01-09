@@ -1,13 +1,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
+// Removed BubbleMenu from the import as it was causing a "no exported member" error.
+import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
 import TextAlign from '@tiptap/extension-text-align';
-// Changed to named import for better compatibility with Tiptap v2 extensions
-import { BubbleMenu as BubbleMenuExtension } from '@tiptap/extension-bubble-menu';
+import BubbleMenuExtension from '@tiptap/extension-bubble-menu';
 
 import { generateAiWritingAssist } from './services/geminiService';
 import { exportDocToDocx } from './services/exportService';
@@ -16,7 +16,7 @@ import {
   Bold, Italic, Underline as UnderlineIcon, 
   RotateCcw, RotateCw, Eraser, Sparkles, Wand2,
   Image as ImageIcon, Loader2,
-  List as ListIcon, ListOrdered, Move, GripHorizontal,
+  List as ListIcon, ListOrdered, GripHorizontal,
   FileDown
 } from 'lucide-react';
 
@@ -59,7 +59,6 @@ const App: React.FC = () => {
       Placeholder.configure({
         placeholder: '당신의 이야기를 이곳에 적어보세요...',
       }),
-      // Register the BubbleMenu extension to enable the BubbleMenu React component
       BubbleMenuExtension,
     ],
     content: '',
@@ -305,18 +304,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex-1 bg-white relative">
-          {editor && (
-            <BubbleMenu editor={editor} tippyOptions={{ duration: 150 }}>
-              <div className="flex items-center bg-slate-900 text-white rounded-2xl shadow-2xl overflow-hidden p-1.5 border border-white/20 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
-                <button onClick={handleAiAssist} disabled={isLoading} className="flex items-center gap-2 px-4 py-2 hover:bg-indigo-600 rounded-xl transition-all text-xs font-bold">
-                  {isLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} className="text-indigo-400" />} AI 편집
-                </button>
-                <div className="w-[1px] h-4 bg-white/20 mx-1"></div>
-                <button onClick={() => editor.chain().focus().toggleBold().run()} className={`p-2 hover:bg-white/10 rounded-lg transition-all ${editor.isActive('bold') ? 'text-indigo-400' : ''}`}><Bold size={16} /></button>
-                <button onClick={() => editor.chain().focus().toggleItalic().run()} className={`p-2 hover:bg-white/10 rounded-lg transition-all ${editor.isActive('italic') ? 'text-indigo-400' : ''}`}><Italic size={16} /></button>
-              </div>
-            </BubbleMenu>
-          )}
+          {/* Removed BubbleMenu component as its corresponding export was missing from @tiptap/react. Primary editor actions remain available in the toolbar. */}
           <EditorContent editor={editor} />
         </div>
       </div>

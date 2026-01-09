@@ -20,7 +20,7 @@
     "@tiptap/extension-underline": "2.11.0",
     "@tiptap/extension-placeholder": "2.11.0",
     "@tiptap/extension-text-align": "2.11.0",
-    "@tiptap/extension-bubble-menu": "^3.15.3"
+    "@tiptap/extension-bubble-menu": "2.11.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
